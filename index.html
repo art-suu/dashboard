@@ -268,21 +268,43 @@ function blankRow(){
 }
 
 /* =====================================================================
-   PERSISTENCE (personal, per-user — window.storage)
+   PERSISTENCE — uses Claude's artifact storage (window.storage) when
+   available; falls back to plain localStorage for standalone hosting
+   (e.g. GitHub Pages), where window.storage doesn't exist.
    ===================================================================== */
+const STORAGE_KEY = 'cris-dashboard-state';
+const hasArtifactStorage = () => (typeof window !== 'undefined' && !!window.storage);
+
 async function saveState(){
   try{
-    await window.storage.set('cris-dashboard-state', JSON.stringify(state), false);
+    if(hasArtifactStorage()){
+      await window.storage.set(STORAGE_KEY, JSON.stringify(state), false);
+    } else if(typeof localStorage !== 'undefined'){
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
   }catch(e){ console.warn('save failed', e); }
 }
 async function loadState(){
   try{
-    const res = await window.storage.get('cris-dashboard-state', false);
-    if(res && res.value){
-      const parsed = JSON.parse(res.value);
-      state = Object.assign(state, parsed);
+    if(hasArtifactStorage()){
+      const res = await window.storage.get(STORAGE_KEY, false);
+      if(res && res.value){
+        state = Object.assign(state, JSON.parse(res.value));
+      }
+    } else if(typeof localStorage !== 'undefined'){
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw) state = Object.assign(state, JSON.parse(raw));
     }
   }catch(e){ /* no saved state yet */ }
+}
+async function deleteState(){
+  try{
+    if(hasArtifactStorage()){
+      await window.storage.delete(STORAGE_KEY, false);
+    } else if(typeof localStorage !== 'undefined'){
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }catch(e){ /* nothing stored yet, fine */ }
 }
 
 /* =====================================================================
@@ -428,9 +450,7 @@ async function resetAll(){
   pipeRunning = {BC:false, AB:false};
   pipeStepIdx = {BC:-1, AB:-1};
 
-  try{
-    await window.storage.delete('cris-dashboard-state', false);
-  }catch(e){ /* nothing stored yet, fine */ }
+  await deleteState();
 
   activeTab = 'Dashboard';
   render();
