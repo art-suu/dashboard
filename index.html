@@ -378,6 +378,7 @@ function renderRawSheet(region){
     <div class="toolbar">
       <button class="btn primary small" onclick="openPaste('${region}')">Paste rows…</button>
       <button class="btn ghost small" onclick="clearRegion('${region}')">Clear all</button>
+      <button class="btn ghost small" id="csvBtn_${region}" ${rows.length?'':'disabled'} onclick="downloadRawCSV('${region}')">⬇ Download CSV</button>
       <span style="margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)">
         Report date&nbsp;
         <input type="date" value="${state.reportDate}" onchange="setReportDate(this.value)">
@@ -698,6 +699,49 @@ async function copyProcessed(region){
   }
 }
 
+function csvEscape(v){
+  v = v===undefined || v===null ? '' : String(v);
+  if(/["\,\n\r]/.test(v)) return '"' + v.replace(/"/g,'""') + '"';
+  return v;
+}
+
+function toRawCSV(region){
+  const data = state.raw[region];
+  if(!data || data.length===0) return null;
+  const lines = [RAW_COLS.map(c=>csvEscape(c.l)).join(',')];
+  data.forEach(row=>{
+    lines.push(RAW_COLS.map(c=>csvEscape(row[c.k])).join(','));
+  });
+  return lines.join('\r\n');
+}
+
+function downloadRawCSV(region){
+  const btn = document.getElementById(`csvBtn_${region}`);
+  const csv = toRawCSV(region);
+  if(!csv){
+    if(btn){
+      const orig = btn.textContent;
+      btn.textContent = 'Nothing to export';
+      setTimeout(()=>{ btn.textContent = orig; }, 1400);
+    }
+    return;
+  }
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `CRIS_Correction_${state.reportDate}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  if(btn){
+    const orig = btn.textContent;
+    btn.textContent = `✓ Saved ${state.raw[region].length} row(s)`;
+    setTimeout(()=>{ btn.textContent = orig; }, 1800);
+  }
+}
+
 function renderProcessedGrid(container, region, rows, cols){
   const table = document.createElement('table');
   table.className='grid';
@@ -905,7 +949,8 @@ function renderDashboard(){
       • <b>Bypass flag</b>: any REMARK containing "bypass" is treated as resolved/inactive; everything else is highlighted amber as an active exception needing attention.<br>
       • No due-date/overdue highlight for now — there's no DUE DATE field in this feed, and that check is on hold.<br>
       • <b>Area-code breakdown</b>: BC shows 604 and 250 broken out individually, with every other NPA (including blank) rolled into <b>TF AND OTHER</b>. AB shows 780 and 403 broken out individually, with everything else rolled into <b>EAST AND OTHER</b>. Rows are sorted by volume.<br>
-      • <b>&gt;10 months column</b>: shown in red in the area-code table, this counts how many orders in that row (or, inside the TF/EAST AND OTHER breakdown, that underlying NPA) have a <b>REQ DATE</b> more than 10 months older than the shared report date.
+      • <b>&gt;10 months column</b>: shown in red in the area-code table, this counts how many orders in that row (or, inside the TF/EAST AND OTHER breakdown, that underlying NPA) have a <b>REQ DATE</b> more than 10 months older than the shared report date.<br>
+      • <b>Download CSV</b> (on the BC/AB tabs) exports that region's raw feed as <b>CRIS_Correction_[report date].csv</b>, using whatever date is set in the report date picker.
     </div>
   `;
   wrap.appendChild(notePanel);
