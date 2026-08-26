@@ -282,7 +282,7 @@ let state = {
   raw: {BC:[], AB:[]},
   processed: {BC:null, AB:null},
   preppedAt: {BC:null, AB:null},
-  reportDate: todayStr(),
+  reportDate: '',
 };
 let activeTab = 'Dashboard';
 let pasteTarget = null;
@@ -474,7 +474,7 @@ async function resetAll(){
     raw: {BC:[], AB:[]},
     processed: {BC:null, AB:null},
     preppedAt: {BC:null, AB:null},
-    reportDate: todayStr(),
+    reportDate: '',
   };
   pipeRunning = {BC:false, AB:false};
   pipeStepIdx = {BC:-1, AB:-1};
@@ -716,6 +716,10 @@ function toRawCSV(region){
 }
 
 function downloadRawCSV(region){
+  if(!state.reportDate){
+    alert('Please set a report date before downloading the CSV.');
+    return;
+  }
   const btn = document.getElementById(`csvBtn_${region}`);
   const csv = toRawCSV(region);
   if(!csv){
@@ -963,6 +967,10 @@ function combinedItem(label, val, cls){
 }
 
 async function captureDashboard(){
+  if(!state.reportDate){
+    alert('Please set a report date before taking a screenshot.');
+    return;
+  }
   const btn = document.getElementById('screenshotBtn');
   const target = document.getElementById('dashboardCapture');
   if(!target) return;
