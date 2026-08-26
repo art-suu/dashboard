@@ -22,6 +22,10 @@
     --dup-tel-soft:#e2eaf7;
     --dup-ord:#7a4fa0;     /* purple - duplicate ORD NUM */
     --dup-ord-soft:#ede3f5;
+    --bc-brand:#4B9F1D;    /* TELUS green - BC region */
+    --bc-brand-soft:#eaf5e2;
+    --ab-brand:#4B286D;    /* TELUS purple - AB region */
+    --ab-brand-soft:#eee6f2;
     --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
     --sans: "Space Grotesk", "Inter", system-ui, sans-serif;
     --body: "IBM Plex Sans", "Inter", system-ui, sans-serif;
@@ -157,6 +161,16 @@
     font-family:var(--sans);font-size:14px;margin:0 0 2px;display:flex;justify-content:space-between;align-items:baseline;
   }
   .dash-card .region-date{font-family:var(--mono);font-size:11px;color:var(--ink-soft);margin-bottom:14px;}
+  .dash-card.region-bc{border-left:4px solid var(--bc-brand);}
+  .dash-card.region-bc h3{color:var(--bc-brand);}
+  .dash-card.region-bc .big-total{color:var(--bc-brand);}
+  .dash-card.region-bc .label{color:var(--bc-brand);opacity:.85;}
+  .dash-card.region-ab{border-left:4px solid var(--ab-brand);}
+  .dash-card.region-ab h3{color:var(--ab-brand);}
+  .dash-card.region-ab .big-total{color:var(--ab-brand);}
+  .dash-card.region-ab .label{color:var(--ab-brand);opacity:.85;}
+  .combined-strip .item.bc .num{color:var(--bc-brand);}
+  .combined-strip .item.ab .num{color:var(--ab-brand);}
   .stat-row{display:flex;justify-content:space-between;padding:6px 2px;border-bottom:1px dashed var(--line-soft);font-size:12.5px;}
   .stat-row .k{color:var(--ink-soft);}
   .stat-row .v{font-family:var(--mono);font-weight:700;}
@@ -168,6 +182,18 @@
   table.mini{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono);margin-top:2px;}
   table.mini th{background:#f1f2ee;padding:5px 6px;text-align:left;font-family:var(--body);font-weight:600;font-size:10.5px;color:var(--ink-soft);}
   table.mini td{padding:5px 6px;border-bottom:1px solid var(--line-soft);}
+  .area-toggle{
+    display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-right:5px;
+    border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--ink-soft);
+    font-size:9px;line-height:1;cursor:pointer;padding:0;vertical-align:middle;
+  }
+  .area-toggle:hover{border-color:var(--ink-soft);color:var(--ink);}
+  .area-toggle.open{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);}
+  td.ten-mo{color:var(--alert);font-weight:700;}
+  tr.area-detail-wrap td{padding:0 !important;border-bottom:1px solid var(--line-soft);}
+  table.area-detail-table{width:100%;margin:0;background:#fafaf8;}
+  table.area-detail-table td{padding:5px 6px 5px 27px !important;border-bottom:1px dashed var(--line-soft);color:var(--ink-soft);}
+  table.area-detail-table tr:last-child td{border-bottom:none;}
   .big-total{
     font-family:var(--sans);font-size:30px;font-weight:700;letter-spacing:-0.02em;
   }
@@ -220,6 +246,7 @@
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 /* =====================================================================
    SCHEMA
@@ -255,7 +282,7 @@ let state = {
   raw: {BC:[], AB:[]},
   processed: {BC:null, AB:null},
   preppedAt: {BC:null, AB:null},
-  reportDate: {BC: todayStr(), AB: todayStr()},
+  reportDate: todayStr(),
 };
 let activeTab = 'Dashboard';
 let pasteTarget = null;
@@ -353,7 +380,7 @@ function renderRawSheet(region){
       <button class="btn ghost small" onclick="clearRegion('${region}')">Clear all</button>
       <span style="margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)">
         Report date&nbsp;
-        <input type="date" value="${state.reportDate[region]}" onchange="setReportDate('${region}', this.value)">
+        <input type="date" value="${state.reportDate}" onchange="setReportDate(this.value)">
       </span>
       <span style="font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);">${rows.length} row(s)</span>
     </div>
@@ -430,9 +457,10 @@ function clearRegion(region){
   saveState();
   render();
 }
-function setReportDate(region, val){
-  state.reportDate[region] = val;
+function setReportDate(val){
+  state.reportDate = val;
   saveState();
+  render();
 }
 
 async function resetAll(){
@@ -445,7 +473,7 @@ async function resetAll(){
     raw: {BC:[], AB:[]},
     processed: {BC:null, AB:null},
     preppedAt: {BC:null, AB:null},
-    reportDate: {BC: todayStr(), AB: todayStr()},
+    reportDate: todayStr(),
   };
   pipeRunning = {BC:false, AB:false};
   pipeStepIdx = {BC:-1, AB:-1};
@@ -736,6 +764,10 @@ function aggregate(region){
     'BYPASS SPECIFIED': count(r=>norm(r.remark).includes('BYPASS') ),
   };
 
+  // USERID sometimes carries "PURGED" instead of an actual user id, meaning the
+  // record was purged from the source system rather than actively worked.
+  const purgedCount = count(r=>norm(r.userId).includes('PURGED'));
+
   const dayBucket = d => {
     d = (d||'').trim();
     if(d==='0') return '0';
@@ -744,20 +776,68 @@ function aggregate(region){
     return null;
   };
 
-  // Area-code breakdown: grouped dynamically by whatever NPA values are actually
-  // present, sorted by volume — rather than assuming fixed codes like the original
-  // macro did (604/250 for BC, 780/403 for AB), since that doesn't generalize.
+  // Parses either the feed's compact YYYYMMDD dates (e.g. "20260812") or the
+  // report-date picker's ISO YYYY-MM-DD format. Returns null if unparseable.
+  const parseFeedDate = s => {
+    s = (s||'').trim();
+    let m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
+    if(!m) m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if(!m) return null;
+    const d = new Date(Date.UTC(+m[1], +m[2]-1, +m[3]));
+    return isNaN(d.getTime()) ? null : d;
+  };
+  const monthsBetween = (newer, older) => {
+    let months = (newer.getUTCFullYear()-older.getUTCFullYear())*12 + (newer.getUTCMonth()-older.getUTCMonth());
+    if(newer.getUTCDate() < older.getUTCDate()) months--;
+    return months;
+  };
+  const reportDateObj = parseFeedDate(state.reportDate) || new Date();
+  // Flagged IMPORTANT when REQ DATE is more than 10 months older than the report date.
+  const isOldRow = r => {
+    const reqDateObj = parseFeedDate(r.reqDate);
+    return !!(reqDateObj && monthsBetween(reportDateObj, reqDateObj) > 10);
+  };
+
+  // Area-code breakdown: BC keeps 604/250 broken out individually and folds every
+  // other NPA (including blank) into "TF AND OTHER"; AB keeps 780/403 broken out
+  // and folds everything else into "EAST AND OTHER". Any other region (shouldn't
+  // occur today) falls back to the old fully-dynamic grouping.
+  const PRIMARY_NPA = { BC:['604','250'], AB:['780','403'] };
+  const OTHER_LABEL  = { BC:'TF AND OTHER', AB:'EAST AND OTHER' };
+  const primaryCodes = PRIMARY_NPA[region] || null;
+  const otherLabel = OTHER_LABEL[region] || 'OTHER';
+
   const npaGroups = {};
   rows.forEach(r=>{
-    const npa = (r.npa||'').trim() || '(blank)';
-    if(!npaGroups[npa]) npaGroups[npa] = {'0 DAY':0,'1 DAY':0,'2+ DAYS':0};
+    const origNpa = (r.npa||'').trim() || '(blank)';
+    let npa = origNpa;
+    if(primaryCodes && !primaryCodes.includes(npa)) npa = otherLabel;
+    if(!npaGroups[npa]) npaGroups[npa] = {'0 DAY':0,'1 DAY':0,'2+ DAYS':0, _detail: npa===otherLabel ? {} : null, _tenMo:0};
     const b = dayBucket(r.days);
     if(b==='0') npaGroups[npa]['0 DAY']++;
     else if(b==='1') npaGroups[npa]['1 DAY']++;
     else if(b==='2+') npaGroups[npa]['2+ DAYS']++;
+    if(isOldRow(r)) npaGroups[npa]._tenMo++;
+
+    // When rows are folded into the combined "other" row, keep a per-original-NPA
+    // tally so the dashboard can show what's underneath it.
+    if(npa===otherLabel){
+      if(!npaGroups[npa]._detail[origNpa]) npaGroups[npa]._detail[origNpa] = {'0 DAY':0,'1 DAY':0,'2+ DAYS':0, _tenMo:0};
+      if(b==='0') npaGroups[npa]._detail[origNpa]['0 DAY']++;
+      else if(b==='1') npaGroups[npa]._detail[origNpa]['1 DAY']++;
+      else if(b==='2+') npaGroups[npa]._detail[origNpa]['2+ DAYS']++;
+      if(isOldRow(r)) npaGroups[npa]._detail[origNpa]._tenMo++;
+    }
   });
   const areaTable = Object.entries(npaGroups)
-    .map(([code, c])=>({code, ...c, _total: c['0 DAY']+c['1 DAY']+c['2+ DAYS']}))
+    .map(([code, c])=>{
+      const detail = c._detail ? Object.entries(c._detail)
+        .map(([dCode, dc])=>({code: dCode, '0 DAY':dc['0 DAY'], '1 DAY':dc['1 DAY'], '2+ DAYS':dc['2+ DAYS'], tenMo: dc._tenMo, _total: dc['0 DAY']+dc['1 DAY']+dc['2+ DAYS']}))
+        .sort((a,b)=> b._total - a._total)
+        .map(({_total, ...rest})=>rest)
+        : null;
+      return {code, '0 DAY':c['0 DAY'], '1 DAY':c['1 DAY'], '2+ DAYS':c['2+ DAYS'], tenMo: c._tenMo, detail, _total: c['0 DAY']+c['1 DAY']+c['2+ DAYS']};
+    })
     .sort((a,b)=> b._total - a._total)
     .map(({_total, ...rest})=>rest);
 
@@ -765,9 +845,10 @@ function aggregate(region){
     '0 DAY': count(r=>dayBucket(r.days)==='0'),
     '1 DAY': count(r=>dayBucket(r.days)==='1'),
     '2+ DAYS': count(r=>dayBucket(r.days)==='2+'),
+    '>10 MONTHS': count(r=>isOldRow(r)),
   };
 
-  return {types, total, remarkCounts, areaTable, outstanding, reportDate: state.reportDate[region]};
+  return {types, total, remarkCounts, purgedCount, areaTable, outstanding, reportDate: state.reportDate};
 }
 
 function renderDashboard(){
@@ -775,27 +856,39 @@ function renderDashboard(){
   const bc = aggregate('BC');
   const ab = aggregate('AB');
 
+  const captureWrap = document.createElement('div');
+  captureWrap.id = 'dashboardCapture';
+
   const panelIntro = document.createElement('div');
   panelIntro.className='panel';
   panelIntro.innerHTML = `
-    <h2 class="sec">Combined snapshot</h2>
-    <p class="sub">Pulled live from the BC and AB raw feeds — no need to re-run Prep Sheet just to see these totals; only the
-    ${'BC_'}/${'AB_'} detail tables need prepping.</p>
+    <div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+      <h2 class="sec" style="margin:0;">Combined snapshot</h2>
+      <button class="btn ghost small" id="screenshotBtn" onclick="captureDashboard()">📷 Screenshot dashboard</button>
+    </div>
+    <div class="report-date-row" style="display:flex;gap:22px;flex-wrap:wrap;align-items:center;margin:8px 0 16px;font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);">
+      <label style="display:flex;align-items:center;gap:7px;">
+        Report date
+        <input type="date" value="${state.reportDate}" onchange="setReportDate(this.value)">
+      </label>
+    </div>
     <div class="combined-strip">
-      ${combinedItem('BC total', bc?bc.total:'—')}
-      ${combinedItem('AB total', ab?ab.total:'—')}
+      ${combinedItem('BC total', bc?bc.total:'—', 'bc')}
+      ${combinedItem('AB total', ab?ab.total:'—', 'ab')}
       ${combinedItem('Combined', (bc||ab) ? ((bc?bc.total:0)+(ab?ab.total:0)) : '—')}
-      ${combinedItem('BC bypass specified', bc?bc.remarkCounts['BYPASS SPECIFIED']:'—')}
-      ${combinedItem('AB bypass specified', ab?ab.remarkCounts['BYPASS SPECIFIED']:'—')}
+      ${combinedItem('BC bypass specified', bc?bc.remarkCounts['BYPASS SPECIFIED']:'—', 'bc')}
+      ${combinedItem('AB bypass specified', ab?ab.remarkCounts['BYPASS SPECIFIED']:'—', 'ab')}
     </div>
   `;
-  wrap.appendChild(panelIntro);
+  captureWrap.appendChild(panelIntro);
 
   const grid = document.createElement('div');
   grid.className='dash-grid';
   grid.appendChild(dashCard('BC', bc));
   grid.appendChild(dashCard('AB', ab));
-  wrap.appendChild(grid);
+  captureWrap.appendChild(grid);
+
+  wrap.appendChild(captureWrap);
 
   const notePanel = document.createElement('div');
   notePanel.className='panel';
@@ -811,7 +904,8 @@ function renderDashboard(){
       • <b>TN</b> = PTN + TEL NUM concatenated as text (e.g. PTN "204" + TEL NUM "2211803" → "2042211803"). The original workbook concatenated PTN with a "PTN1" field that isn't present in your feed — TEL NUM fills that role here.<br>
       • <b>Bypass flag</b>: any REMARK containing "bypass" is treated as resolved/inactive; everything else is highlighted amber as an active exception needing attention.<br>
       • No due-date/overdue highlight for now — there's no DUE DATE field in this feed, and that check is on hold.<br>
-      • <b>Area-code breakdown</b> groups dynamically by whatever NPA values actually appear in your data (sorted by volume), rather than assuming fixed codes like the original macro did.
+      • <b>Area-code breakdown</b>: BC shows 604 and 250 broken out individually, with every other NPA (including blank) rolled into <b>TF AND OTHER</b>. AB shows 780 and 403 broken out individually, with everything else rolled into <b>EAST AND OTHER</b>. Rows are sorted by volume.<br>
+      • <b>&gt;10 months column</b>: shown in red in the area-code table, this counts how many orders in that row (or, inside the TF/EAST AND OTHER breakdown, that underlying NPA) have a <b>REQ DATE</b> more than 10 months older than the shared report date.
     </div>
   `;
   wrap.appendChild(notePanel);
@@ -819,13 +913,56 @@ function renderDashboard(){
   return wrap;
 }
 
-function combinedItem(label, val){
-  return `<div class="item"><div class="label">${label}</div><div class="num">${val}</div></div>`;
+function combinedItem(label, val, cls){
+  return `<div class="item${cls?' '+cls:''}"><div class="label">${label}</div><div class="num">${val}</div></div>`;
+}
+
+async function captureDashboard(){
+  const btn = document.getElementById('screenshotBtn');
+  const target = document.getElementById('dashboardCapture');
+  if(!target) return;
+  const orig = btn ? btn.textContent : null;
+  if(btn){ btn.textContent = 'Capturing…'; btn.disabled = true; }
+  try{
+    if(typeof html2canvas === 'undefined'){
+      throw new Error('html2canvas not loaded');
+    }
+    const canvas = await html2canvas(target, {
+      backgroundColor: getComputedStyle(document.body).backgroundColor || '#eef0ec',
+      scale: Math.min(2, window.devicePixelRatio || 1),
+      useCORS: true,
+    });
+    const dataUrl = canvas.toDataURL('image/png');
+    const link = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:T]/g,'-').slice(0,19);
+    link.href = dataUrl;
+    link.download = `cris-dashboard-${stamp}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    if(btn){ btn.textContent = '✓ Saved'; }
+  }catch(e){
+    console.warn('screenshot failed', e);
+    if(btn){ btn.textContent = '✕ Failed — check connection'; }
+  }finally{
+    if(btn){
+      setTimeout(()=>{ btn.textContent = orig; btn.disabled = false; }, 1800);
+    }
+  }
+}
+
+function toggleAreaDetail(rowId, btn){
+  const row = document.getElementById(rowId);
+  if(!row) return;
+  const isHidden = row.style.display === 'none';
+  row.style.display = isHidden ? '' : 'none';
+  btn.textContent = isHidden ? '▾' : '▸';
+  btn.classList.toggle('open', isHidden);
 }
 
 function dashCard(region, agg){
   const card = document.createElement('div');
-  card.className='panel dash-card';
+  card.className = `panel dash-card region-${region.toLowerCase()}`;
   if(!agg){
     card.innerHTML = `
       <h3>${region}</h3>
@@ -838,18 +975,33 @@ function dashCard(region, agg){
     <div class="stat-row"><span class="k">${t} orders</span><span class="v">${agg.types[t]}</span></div>
   `).join('');
 
-  const areaRows = agg.areaTable.map(a=>`
-    <tr><td>${a.code}</td><td>${a['0 DAY']}</td><td>${a['1 DAY']}</td><td>${a['2+ DAYS']}</td></tr>
-  `).join('');
+  const escHtml = s => String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  const areaRows = agg.areaTable.map((a, i)=>{
+    const hasDetail = a.detail && a.detail.length>0;
+    const rowId = `areaDetail_${region}_${i}`;
+    const toggleBtn = hasDetail
+      ? `<button class="area-toggle" onclick="toggleAreaDetail('${rowId}', this)" aria-label="Show breakdown">▸</button>`
+      : '';
+    const mainRow = `<tr><td>${toggleBtn}${escHtml(a.code)}</td><td>${a['0 DAY']}</td><td>${a['1 DAY']}</td><td>${a['2+ DAYS']}</td><td class="ten-mo">${a.tenMo}</td></tr>`;
+    if(!hasDetail) return mainRow;
+    const detailRows = a.detail.map(d=>`
+      <tr class="area-detail-row"><td>${escHtml(d.code)}</td><td>${d['0 DAY']}</td><td>${d['1 DAY']}</td><td>${d['2+ DAYS']}</td><td class="ten-mo">${d.tenMo}</td></tr>
+    `).join('');
+    return mainRow + `<tr id="${rowId}" class="area-detail-wrap" style="display:none"><td colspan="5"><table class="mini area-detail-table"><tbody>${detailRows}</tbody></table></td></tr>`;
+  }).join('');
 
   card.innerHTML = `
     <h3>${region} <span class="big-total">${agg.total}</span></h3>
-    <div class="region-date">report date ${agg.reportDate || '—'}</div>
 
     <div class="stat-block">
       <div class="label">Order type</div>
       ${typeRows}
       <div class="stat-row"><span class="k"><b>Total</b></span><span class="v"><b>${agg.total}</b></span></div>
+    </div>
+
+    <div class="stat-block">
+      <div class="label">Purged</div>
+      <div class="stat-row"><span class="k">PURGE ORDER</span><span class="v">${agg.purgedCount}</span></div>
     </div>
 
     <div class="stat-block">
@@ -862,7 +1014,7 @@ function dashCard(region, agg){
     <div class="stat-block">
       <div class="label">Area code × days outstanding</div>
       <table class="mini">
-        <thead><tr><th>Area</th><th>0 day</th><th>1 day</th><th>2+ days</th></tr></thead>
+        <thead><tr><th>Area</th><th>0 day</th><th>1 day</th><th>2+ days</th><th>&gt;10 months</th></tr></thead>
         <tbody>${areaRows}</tbody>
       </table>
     </div>
@@ -872,6 +1024,7 @@ function dashCard(region, agg){
       <div class="stat-row"><span class="k">0 day</span><span class="v">${agg.outstanding['0 DAY']}</span></div>
       <div class="stat-row"><span class="k">1 day</span><span class="v">${agg.outstanding['1 DAY']}</span></div>
       <div class="stat-row"><span class="k">2+ days</span><span class="v">${agg.outstanding['2+ DAYS']}</span></div>
+      <div class="stat-row"><span class="k">&gt;10 months</span><span class="v" style="color:var(--alert)">${agg.outstanding['>10 MONTHS']}</span></div>
     </div>
   `;
   return card;
