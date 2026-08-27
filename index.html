@@ -283,11 +283,16 @@ let state = {
   processed: {BC:null, AB:null},
   preppedAt: {BC:null, AB:null},
   reportDate: '',
+  driveFolderLinks: {
+    BC: 'https://drive.google.com/drive/folders/1LM1QZ3-ZHloyWNT7LuX8sdHfdi-Z1oo1',
+    AB: 'https://drive.google.com/drive/folders/1mY5dfNNfhAtbyhOEONXUOht2OWeqdR1K',
+  },
 };
 let activeTab = 'Dashboard';
 let pasteTarget = null;
 
 function todayStr(){ return new Date().toISOString().slice(0,10); }
+const escHtmlAttr = s => String(s==null?'':s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 function blankRow(){
   const r = {_uid: Math.random().toString(36).slice(2)};
   RAW_COLS.forEach(c => r[c.k] = '');
@@ -379,6 +384,8 @@ function renderRawSheet(region){
       <button class="btn primary small" onclick="openPaste('${region}')">Paste rows…</button>
       <button class="btn ghost small" onclick="clearRegion('${region}')">Clear all</button>
       <button class="btn ghost small" id="csvBtn_${region}" ${rows.length?'':'disabled'} onclick="downloadRawCSV('${region}')">⬇ Download CSV</button>
+      ${state.driveFolderLinks[region] ? `<a class="btn ghost small" href="${escHtmlAttr(state.driveFolderLinks[region])}" target="_blank" rel="noopener">📂 Open Drive folder</a>` : ''}
+      <button class="btn ghost small" onclick="editDriveFolderLink('${region}')" title="Set/change the Drive folder link" style="padding:4px 8px;">✎</button>
       <span style="margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)">
         Report date&nbsp;
         <input type="date" value="${state.reportDate}" onchange="setReportDate(this.value)">
@@ -463,6 +470,14 @@ function setReportDate(val){
   saveState();
   render();
 }
+function editDriveFolderLink(region){
+  const current = state.driveFolderLinks[region] || '';
+  const val = window.prompt(`Paste the Google Drive folder link for ${region}:`, current);
+  if(val===null) return; // cancelled
+  state.driveFolderLinks[region] = val.trim();
+  saveState();
+  render();
+}
 
 async function resetAll(){
   const first = confirm('Reset everything?\n\nThis clears the BC and AB raw feeds, both prepped (_) sheets, and all Dashboard totals. This cannot be undone.');
@@ -475,6 +490,7 @@ async function resetAll(){
     processed: {BC:null, AB:null},
     preppedAt: {BC:null, AB:null},
     reportDate: '',
+    driveFolderLinks: state.driveFolderLinks || {BC:'', AB:''},
   };
   pipeRunning = {BC:false, AB:false};
   pipeStepIdx = {BC:-1, AB:-1};
@@ -734,7 +750,7 @@ function downloadRawCSV(region){
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `CRIS_Correction_${state.reportDate}.csv`;
+  link.download = `CRIS_Correction_${region}_${state.reportDate}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -954,7 +970,7 @@ function renderDashboard(){
       • No due-date/overdue highlight for now — there's no DUE DATE field in this feed, and that check is on hold.<br>
       • <b>Area-code breakdown</b>: BC shows 604 and 250 broken out individually, with every other NPA (including blank) rolled into <b>TF AND OTHER</b>. AB shows 780 and 403 broken out individually, with everything else rolled into <b>EAST AND OTHER</b>. Rows are sorted by volume.<br>
       • <b>&gt;10 months column</b>: shown in red in the area-code table, this counts how many orders in that row (or, inside the TF/EAST AND OTHER breakdown, that underlying NPA) have a <b>REQ DATE</b> more than 10 months older than the shared report date.<br>
-      • <b>Download CSV</b> (on the BC/AB tabs) exports that region's raw feed as <b>CRIS_Correction_[report date].csv</b>, using whatever date is set in the report date picker.
+      • <b>Download CSV</b> (on the BC/AB tabs) exports that region's raw feed as <b>CRIS_Correction_[region]_[report date].csv</b>, using whatever date is set in the report date picker.
     </div>
   `;
   wrap.appendChild(notePanel);
