@@ -100,6 +100,35 @@
     background:var(--ink);color:#fff;text-align:left;padding:8px 9px;font-weight:600;
     font-size:10.5px;letter-spacing:.03em;text-transform:uppercase;white-space:nowrap;position:sticky;top:0;
   }
+  table.grid th .col-filter-btn{
+    background:transparent;border:1px solid rgba(255,255,255,.35);color:#fff;border-radius:4px;
+    font-size:9px;line-height:1;padding:2px 5px;cursor:pointer;flex:0 0 auto;
+  }
+  table.grid th .col-filter-btn:hover{background:rgba(255,255,255,.18);}
+  table.grid th .col-filter-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .filter-menu{
+    position:absolute;top:100%;left:0;z-index:40;background:#fff;color:var(--ink);
+    border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);
+    padding:8px;width:210px;font-family:var(--body);font-size:12.5px;text-transform:none;
+    letter-spacing:normal;font-weight:400;white-space:normal;
+  }
+  .filter-menu .fm-action{
+    display:block;width:100%;text-align:left;background:none;border:none;padding:6px 6px;
+    border-radius:5px;cursor:pointer;font-size:12.5px;color:var(--ink);
+  }
+  .filter-menu .fm-action:hover{background:#f1f2ee;}
+  .filter-menu .fm-sep{height:1px;background:var(--line-soft);margin:6px 0;}
+  .filter-menu .fm-search{
+    width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--line);
+    border-radius:5px;font-size:12px;margin-bottom:6px;
+  }
+  .filter-menu .fm-check-all{
+    display:flex;align-items:center;gap:6px;padding:4px 2px;font-weight:600;
+    border-bottom:1px solid var(--line-soft);margin-bottom:4px;
+  }
+  .filter-menu .fm-values{max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;}
+  .filter-menu .fm-check{display:flex;align-items:center;gap:6px;padding:3px 2px;font-size:12px;word-break:break-word;}
+  .filter-menu .fm-empty{padding:8px 2px;color:var(--ink-soft);font-size:12px;}
   table.grid td{padding:0;border-bottom:1px solid var(--line-soft);border-right:1px solid var(--line-soft);}
   table.grid td input, table.grid td select{
     width:100%;border:none;padding:7px 8px;font-family:var(--mono);font-size:12px;
@@ -291,6 +320,20 @@ let state = {
 let activeTab = 'Dashboard';
 let pasteTarget = null;
 
+// Excel-style column filter/sort state for the BC_/AB_ prepped grids. Transient
+// (not saved to state/localStorage) — resets on page reload, just like Excel's
+// filters would if you reopened a workbook without saving.
+let gridFilters = { BC:{}, AB:{} };  // gridFilters[region][colKey] = Set of allowed values, or undefined = no filter
+let openFilterKey = null;            // { region, colKey } of the currently-open dropdown, or null
+
+document.addEventListener('click', (e)=>{
+  if(openFilterKey && !e.target.closest('.filter-menu') && !e.target.closest('.col-filter-btn')){
+    const r = openFilterKey.region;
+    openFilterKey = null;
+    refreshProcessedGrid(r);
+  }
+});
+
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 const escHtmlAttr = s => String(s==null?'':s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 function blankRow(){
@@ -302,41 +345,84 @@ function blankRow(){
 /* =====================================================================
    PERSISTENCE — uses Claude's artifact storage (window.storage) when
    available; falls back to plain localStorage for standalone hosting
-   (e.g. GitHub Pages), where window.storage doesn't exist.
+   (e.g. GitHub Pages), where window.storage doesn't exist. Also falls
+   back to localStorage mid-session if window.storage briefly errors out,
+   so a transient backend hiccup doesn't silently lose your edits.
    ===================================================================== */
 const STORAGE_KEY = 'cris-dashboard-state';
 const hasArtifactStorage = () => (typeof window !== 'undefined' && !!window.storage);
+const hasLocalStorage = () => (typeof localStorage !== 'undefined');
+
+function showSaveWarning(show){
+  let el = document.getElementById('saveWarning');
+  if(show && !el){
+    el = document.createElement('div');
+    el.id = 'saveWarning';
+    el.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:999;background:var(--alert);color:#fff;'
+      + 'padding:8px 14px;border-radius:8px;font-family:var(--body);font-size:12.5px;box-shadow:0 6px 18px rgba(0,0,0,.2);';
+    el.textContent = '⚠ Save is having trouble reaching storage — using a local backup for now.';
+    document.body.appendChild(el);
+  } else if(!show && el){
+    el.remove();
+  }
+}
 
 async function saveState(){
-  try{
-    if(hasArtifactStorage()){
+  if(hasArtifactStorage()){
+    try{
       await window.storage.set(STORAGE_KEY, JSON.stringify(state), false);
-    } else if(typeof localStorage !== 'undefined'){
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      showSaveWarning(false);
+      return;
+    }catch(e){
+      console.warn('primary save failed, falling back to localStorage', e);
     }
-  }catch(e){ console.warn('save failed', e); }
+  }
+  if(hasLocalStorage()){
+    try{
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      // Only surface the warning banner if the primary store exists but failed —
+      // if there's no artifact storage at all, localStorage is just the normal path.
+      if(hasArtifactStorage()) showSaveWarning(true);
+    }catch(e){
+      console.warn('fallback save also failed', e);
+      showSaveWarning(true);
+    }
+  } else {
+    console.warn('no storage backend available — changes will not persist across reloads');
+    showSaveWarning(true);
+  }
 }
 async function loadState(){
-  try{
-    if(hasArtifactStorage()){
+  if(hasArtifactStorage()){
+    try{
       const res = await window.storage.get(STORAGE_KEY, false);
       if(res && res.value){
         state = Object.assign(state, JSON.parse(res.value));
+        return;
       }
-    } else if(typeof localStorage !== 'undefined'){
+    }catch(e){
+      console.warn('primary load failed, trying localStorage backup', e);
+    }
+  }
+  if(hasLocalStorage()){
+    try{
       const raw = localStorage.getItem(STORAGE_KEY);
       if(raw) state = Object.assign(state, JSON.parse(raw));
-    }
-  }catch(e){ /* no saved state yet */ }
+    }catch(e){ /* no saved state yet */ }
+  }
 }
 async function deleteState(){
   try{
     if(hasArtifactStorage()){
       await window.storage.delete(STORAGE_KEY, false);
-    } else if(typeof localStorage !== 'undefined'){
+    }
+  }catch(e){ /* nothing stored yet, fine */ }
+  try{
+    if(hasLocalStorage()){
       localStorage.removeItem(STORAGE_KEY);
     }
   }catch(e){ /* nothing stored yet, fine */ }
+  showSaveWarning(false);
 }
 
 /* =====================================================================
@@ -521,6 +607,8 @@ function isHeaderLine(parts){
   return matches >= 3;
 }
 
+const RAW_COLS_NO_USERID = RAW_COLS.filter(c=>c.k!=='userId');
+
 function commitPaste(){
   const text = document.getElementById('pasteArea').value.trim();
   if(!text || !pasteTarget){ closePaste(); return; }
@@ -531,7 +619,12 @@ function commitPaste(){
     const parts = line.split(sep).map(p=>p.replace(/^"|"$/g,'').trim());
     if(isHeaderLine(parts)){ skipped++; return; } // skip header row(s), wherever they appear
     const row = blankRow();
-    RAW_COLS.forEach((c,i)=>{ row[c.k] = (parts[i]||'').trim(); });
+    // Some CRIS exports omit the USERID column entirely (13 fields instead of
+    // 14), which would otherwise shift REMARK into USERID's slot and dates
+    // into REMARK's slot. Detect the field count per line and map accordingly
+    // instead of always assuming the full 14-column layout.
+    const cols = (parts.length <= RAW_COLS_NO_USERID.length) ? RAW_COLS_NO_USERID : RAW_COLS;
+    cols.forEach((c,i)=>{ row[c.k] = (parts[i]||'').trim(); });
     state.raw[pasteTarget].push(row);
   });
   saveState();
@@ -762,15 +855,141 @@ function downloadRawCSV(region){
   }
 }
 
+function refreshProcessedGrid(region){
+  const cols = RAW_COLS.filter(c=>c.k!=='userId').concat(PROCESSED_EXTRA_COLS);
+  const data = state.processed[region];
+  const gridEl = document.getElementById(`procGrid_${region}`);
+  if(!gridEl || !data) return;
+  renderProcessedGrid(gridEl, region, data, cols);
+}
+
+function getDistinctColumnValues(region, colKey, cols){
+  const col = cols.find(c=>c.k===colKey);
+  const rows = state.processed[region] || [];
+  const set = new Set();
+  rows.forEach(r => set.add(processedCellText(r, col)));
+  return Array.from(set).sort((a,b)=> String(a).localeCompare(String(b), undefined, {numeric:true, sensitivity:'base'}));
+}
+
+function toggleFilterMenu(e, region, colKey){
+  e.stopPropagation();
+  if(openFilterKey && openFilterKey.region===region && openFilterKey.colKey===colKey){
+    openFilterKey = null;
+  } else {
+    openFilterKey = {region, colKey};
+  }
+  refreshProcessedGrid(region);
+}
+
+function toggleFilterValue(region, colKey, val, checked){
+  const cols = RAW_COLS.filter(c=>c.k!=='userId').concat(PROCESSED_EXTRA_COLS);
+  if(!gridFilters[region][colKey]){
+    // No filter yet means "everything selected" — materialize that as an
+    // explicit set before removing/adding the one value that changed.
+    gridFilters[region][colKey] = new Set(getDistinctColumnValues(region, colKey, cols));
+  }
+  const set = gridFilters[region][colKey];
+  if(checked) set.add(val); else set.delete(val);
+  refreshProcessedGrid(region);
+}
+
+function toggleFilterAll(region, colKey, checked){
+  if(checked){
+    delete gridFilters[region][colKey]; // no filter = show all
+  } else {
+    gridFilters[region][colKey] = new Set(); // select none
+  }
+  refreshProcessedGrid(region);
+}
+
+function clearColumnFilter(region, colKey){
+  delete gridFilters[region][colKey];
+  openFilterKey = null;
+  refreshProcessedGrid(region);
+}
+
+function buildFilterMenu(region, colKey, cols){
+  const menu = document.createElement('div');
+  menu.className = 'filter-menu open';
+  menu.onclick = (e)=> e.stopPropagation(); // clicks inside the menu shouldn't close it
+
+  const allValues = getDistinctColumnValues(region, colKey, cols);
+  const activeSet = gridFilters[region][colKey]; // undefined = everything selected
+  const allCurrentlySelected = activeSet ? allValues.every(v=>activeSet.has(v)) : true;
+
+  menu.innerHTML = `
+    <input type="text" class="fm-search" placeholder="Search values…">
+    <label class="fm-check-all"><input type="checkbox" class="fm-select-all" ${allCurrentlySelected?'checked':''}> (Select All)</label>
+    <div class="fm-values">
+      ${allValues.length===0 ? `<div class="fm-empty">No values yet</div>` : allValues.map(v=>{
+        const checked = activeSet ? activeSet.has(v) : true;
+        const label = v==='' ? '(Blanks)' : escHtmlAttr(v);
+        return `<label class="fm-check"><input type="checkbox" class="fm-value-checkbox" data-val="${escHtmlAttr(v)}" ${checked?'checked':''}> ${label}</label>`;
+      }).join('')}
+    </div>
+    <div class="fm-sep"></div>
+    <button type="button" class="fm-action" data-action="clear">✕ Clear filter</button>
+  `;
+
+  menu.querySelector('[data-action="clear"]').onclick = ()=> clearColumnFilter(region, colKey);
+  menu.querySelector('.fm-select-all').onchange = (e)=> toggleFilterAll(region, colKey, e.target.checked);
+  menu.querySelectorAll('.fm-value-checkbox').forEach(cb=>{
+    cb.onchange = (e)=> toggleFilterValue(region, colKey, cb.dataset.val, e.target.checked);
+  });
+  // Live search narrows the visible checkboxes only — kept purely local to the
+  // DOM (no re-render) so typing doesn't lose focus on every keystroke.
+  menu.querySelector('.fm-search').addEventListener('input', (e)=>{
+    const term = e.target.value.toLowerCase();
+    menu.querySelectorAll('.fm-check').forEach(lbl=>{
+      lbl.style.display = lbl.textContent.toLowerCase().includes(term) ? '' : 'none';
+    });
+  });
+
+  return menu;
+}
+
 function renderProcessedGrid(container, region, rows, cols){
   const table = document.createElement('table');
   table.className='grid';
   const thead = document.createElement('thead');
   const trh = document.createElement('tr');
-  cols.forEach(c=>{ const th=document.createElement('th'); th.textContent=c.l; trh.appendChild(th); });
+
+  cols.forEach(c=>{
+    const th = document.createElement('th');
+    const filterActive = !!gridFilters[region][c.k];
+
+    const headerRow = document.createElement('div');
+    headerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:5px;';
+    const label = document.createElement('span');
+    label.textContent = c.l;
+    headerRow.appendChild(label);
+
+    const filterBtn = document.createElement('button');
+    filterBtn.type = 'button';
+    filterBtn.className = 'col-filter-btn' + (filterActive ? ' active' : '');
+    filterBtn.textContent = '▾';
+    filterBtn.title = 'Filter / sort';
+    filterBtn.onclick = (e)=> toggleFilterMenu(e, region, c.k);
+    headerRow.appendChild(filterBtn);
+
+    th.appendChild(headerRow);
+
+    if(openFilterKey && openFilterKey.region===region && openFilterKey.colKey===c.k){
+      th.appendChild(buildFilterMenu(region, c.k, cols));
+    }
+    trh.appendChild(th);
+  });
   thead.appendChild(trh); table.appendChild(thead);
 
-  // duplicate detection — counted independently for TEL NUM and ORD NUM, blanks ignored
+  // Apply column filters (undefined for a column = no filter on it)
+  let displayRows = rows.filter(row => cols.every(c=>{
+    const sel = gridFilters[region][c.k];
+    if(!sel) return true;
+    return sel.has(processedCellText(row, c));
+  }));
+
+  // duplicate detection — counted against the full unfiltered dataset, so it
+  // always reflects the true feed, not just whatever's currently visible
   const telCounts = {}, ordCounts = {};
   rows.forEach(r=>{
     const t = (r.telNum||'').trim(); if(t) telCounts[t] = (telCounts[t]||0)+1;
@@ -778,33 +997,43 @@ function renderProcessedGrid(container, region, rows, cols){
   });
 
   const tbody = document.createElement('tbody');
-  rows.forEach(row=>{
+  if(displayRows.length===0){
     const tr = document.createElement('tr');
-    cols.forEach(c=>{
-      const td = document.createElement('td');
-      if(c.k==='remark' && !row._isBypass && row.remark) td.classList.add('hl-flag');
-      if(c.k==='coc' && row._coc) td.classList.add('hl-alert');
-      if(c.k==='telNum' && telCounts[(row.telNum||'').trim()]>1) td.classList.add('hl-dup-tel');
-      if(c.k==='ordNum' && ordCounts[(row.ordNum||'').trim()]>1) td.classList.add('hl-dup-ord');
-
-      if(['note1','note2'].includes(c.k)){
-        const inp = document.createElement('input');
-        inp.type = 'text';
-        inp.value = row[c.k]||'';
-        inp.oninput = (e)=>{ row[c.k]=e.target.value; };
-        inp.onblur = saveState;
-        td.appendChild(inp);
-      } else if(c.k==='coc'){
-        td.style.padding='7px 8px';
-        td.innerHTML = row._coc ? `<span class="tag alert">Change of Circuit</span>` : '';
-      } else {
-        td.style.padding='7px 8px';
-        td.textContent = row[c.k] !== undefined ? row[c.k] : '';
-      }
-      tr.appendChild(td);
-    });
+    const td = document.createElement('td');
+    td.colSpan = cols.length;
+    td.style.cssText = 'padding:22px;text-align:center;color:var(--ink-soft);font-family:var(--body);';
+    td.textContent = 'No rows match the current filter(s).';
+    tr.appendChild(td);
     tbody.appendChild(tr);
-  });
+  } else {
+    displayRows.forEach(row=>{
+      const tr = document.createElement('tr');
+      cols.forEach(c=>{
+        const td = document.createElement('td');
+        if(c.k==='remark' && !row._isBypass && row.remark) td.classList.add('hl-flag');
+        if(c.k==='coc' && row._coc) td.classList.add('hl-alert');
+        if(c.k==='telNum' && telCounts[(row.telNum||'').trim()]>1) td.classList.add('hl-dup-tel');
+        if(c.k==='ordNum' && ordCounts[(row.ordNum||'').trim()]>1) td.classList.add('hl-dup-ord');
+
+        if(['note1','note2'].includes(c.k)){
+          const inp = document.createElement('input');
+          inp.type = 'text';
+          inp.value = row[c.k]||'';
+          inp.oninput = (e)=>{ row[c.k]=e.target.value; };
+          inp.onblur = saveState;
+          td.appendChild(inp);
+        } else if(c.k==='coc'){
+          td.style.padding='7px 8px';
+          td.innerHTML = row._coc ? `<span class="tag alert">Change of Circuit</span>` : '';
+        } else {
+          td.style.padding='7px 8px';
+          td.textContent = row[c.k] !== undefined ? row[c.k] : '';
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
   table.appendChild(tbody);
   container.innerHTML=''; container.appendChild(table);
 }
